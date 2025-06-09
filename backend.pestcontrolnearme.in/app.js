@@ -2,7 +2,7 @@ const express = require("express");
 //const mysql = require('mysql2/promise');
 const mongoose = require("mongoose");
 const cors = require("cors");
-const axios = require('axios');
+
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const nodemailer = require("nodemailer");
@@ -43,8 +43,8 @@ app.use(express.json());
 const corsOptions = {
 origin: [
    
-    'http://localhost:3000','http://localhost:3001','http://localhost:3002','http://localhost:3003','https://builder.myorderz.com',
-    'https://gentle-macaron-1326ec.netlify.app','https://pestcontrolnearme.in','https://admin.pestcontrolnearme.in/'
+    'http://localhost:3000','http://localhost:3001','http://localhost:3002','http://localhost:3003',
+  ,'https://pestcontrolnearme.in','https://admin.pestcontrolnearme.in','https://www.pestcontrolnearme.in','https://admin.pestcontrolnearme.in'
 
 
   ],// Ensure this matches your client-side URL
@@ -549,24 +549,22 @@ app.get('/alluser', async (req, res) => {
 });
 
 //all vendor
+// Get all vendors in descending order of creation
 app.get('/allVendor', async (req, res) => {
   try {
-     
+    const Vendors = await Vendor.find().sort({ createdAt: -1 }); // Descending order by created_at
 
-      const Vendors  = await Vendor.find();
+    if (Vendors.length === 0) {
+      return res.status(404).send({ status: 'error', message: 'No Vendor found' });
+    }
 
-    
-
-      if (Vendors .length === 0) {
-          return res.status(404).send({ status: 'error', message: 'No Vendor found' });
-      }
-
-      res.send({ status: 'ok', data: Vendors  });
+    res.send({ status: 'ok', data: Vendors });
   } catch (error) {
-      console.error('Error fetching Vendors :', error);
-      res.status(500).send({ status: 'error', message: 'Internal server error' });
+    console.error('Error fetching Vendors:', error);
+    res.status(500).send({ status: 'error', message: 'Internal server error' });
   }
 });
+
 
 app.post("/addProduct", upload.fields([
   { name: 'image', maxCount: 1 },
@@ -3458,7 +3456,7 @@ app.post('/forgot-password', async (req, res) => {
     await vendor.save();
 
     // Construct the reset link
-    const resetLink = `http://localhost:3000/reset-password/${resetToken}`;
+    const resetLink = `https://pestcontrolnearme.in/reset-password/${resetToken}`;
 
     // Set up the email content
     const mailOptions = {
@@ -3506,7 +3504,39 @@ app.post('/verify-token/:token', async (req, res) => {
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
+app.post('/api/reset-password/:token', async (req, res) => {
+  const { token } = req.params;
+  const { password } = req.body;
 
+  try {
+    // Find vendor with matching token and token not expired
+    const vendor = await Vendor.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!vendor) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired token.' });
+    }
+
+    // Hash the new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Update password and clear reset fields
+    vendor.password = hashedPassword;
+    vendor.resetPasswordToken = undefined;
+    vendor.resetPasswordExpires = undefined;
+
+    await vendor.save();
+
+    res.json({ success: true, message: 'Password has been reset successfully.' });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ success: false, message: 'Server error.' });
+  }
+});
 app.put('/updateApprovedVendor/:id', async (req, res) => {
   try {
     const { approved } = req.body;
@@ -3516,12 +3546,47 @@ app.put('/updateApprovedVendor/:id', async (req, res) => {
       { new: true }
     );
 
-    if (updatedVendor) {
-      res.json({ status: 'ok', data: updatedVendor });
-    } else {
-      res.json({ status: 'error', message: 'Vendor not found' });
+    if (!updatedVendor) {
+      return res.json({ status: 'error', message: 'Vendor not found' });
     }
+
+    // Create transporter using cPanel mail settings
+    const transporter = nodemailer.createTransport({
+      host: 'mail.pestcontrolnearme.in',
+      port: 587,
+      secure: false,
+      auth: {
+        user: 'noreply@pestcontrolnearme.in',
+        pass: 'pestcontrol@123',
+      },
+    });
+
+    // Message for approval or rejection
+    const subject = approved
+      ? 'Welcome to www.pestcontrolnearme.in'
+      : 'Account Rejected - www.pestcontrolnearme.in';
+
+    const message = approved
+      ? `Welcome to www.pestcontrolnearme.in 
+      \n\n
+      Dear Licensed Pest Control Operator,\n\nYour business is now visible to customers actively searching for Licensed Pest Control Services in your Pincode. \n\nFrom this point forward, you will be their go-to expert for Pest Control Solutions.\n\nGood Luck!\n\n– Pest Control Near Me Team`
+      : `Dear Applicant,\n\nWe regret to inform you that your vendor account has been rejected and will not be listed on www.pestcontrolnearme.in.\n\nIf you believe this was a mistake or have further questions, please contact our support team.\n\n– Pest Control Near Me Team`;
+
+    // Email options
+    const mailOptions = {
+      from: '"Pest Control Near Me" <noreply@pestcontrolnearme.in>',
+      to: updatedVendor.email,
+      subject,
+      text: message,
+    };
+
+    // Send the email
+    await transporter.sendMail(mailOptions);
+    console.log(`Email sent to ${updatedVendor.email}`);
+
+    res.json({ status: 'ok', data: updatedVendor });
   } catch (error) {
+    console.error('Error:', error.message);
     res.json({ status: 'error', message: error.message });
   }
 });
@@ -4435,52 +4500,93 @@ app.post("/VendorRegister", async (req, res) => {
       res.status(500).send({ status: "error", message: error.message });
     }
   });
-  app.post("/VendorCreateAccount", async (req, res) => {
-    const {
+  app.post("/VendorCreateAccount", upload.single("logoImage"), async (req, res) => {
+  const {
+    businessName, address, pincode, sinceFrom, specialistIn,
+    contactPerson, contactNumber, email, website, pesticideLicence, gstNumber,
+    membership, branchDetails, technicalQualification, password,
+    latitude, longitude
+  } = req.body;
+
+  try {
+    const existingVendor = await Vendor.findOne({ contactNumber });
+    if (existingVendor) {
+      return res.status(400).json({ status: "error", message: "Contact number already exists" });
+    }
+
+    const encryptedPassword = await bcrypt.hash(password, 10);
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+
+    if (isNaN(lat) || isNaN(lng)) {
+      return res.status(400).json({ status: "error", message: 'Invalid coordinates' });
+    }
+
+    const newVendor = await Vendor.create({
       businessName, address, pincode, sinceFrom, specialistIn,
       contactPerson, contactNumber, email, website, pesticideLicence, gstNumber,
-      membership, branchDetails, technicalQualification, password,
-      latitude, longitude
-    } = req.body;
-  
-    try {
-      const existingVendor = await Vendor.findOne({ contactNumber });
-      if (existingVendor) {
-        return res.status(400).json({ status: "error", message: "Contact number already exists" });
-      }
-  
-      const encryptedPassword = await bcrypt.hash(password, 10);
-      const lat = parseFloat(latitude);
-      const lng = parseFloat(longitude);
-  
-      if (isNaN(lat) || isNaN(lng)) {
-        return res.status(400).json({ status: "error", message: 'Invalid coordinates' });
-      }
-  
-      const newVendor = await Vendor.create({
-        businessName, address, pincode, sinceFrom, specialistIn,
-        contactPerson, contactNumber, email, website, pesticideLicence, gstNumber,
-        membership, branchDetails, technicalQualification,
-        location: { type: "Point", coordinates: [lng, lat] },
-        password: encryptedPassword
-      });
-  
-      return res.status(201).json({ status: "ok", vendorId: newVendor._id });
-    } catch (err) {
-      console.error("Registration Error:", err);
-  
-      // Check for duplicate key error
-      if (err.code === 11000) {
-        const duplicateField = Object.keys(err.keyValue)[0];
-        const message = `${duplicateField.charAt(0).toUpperCase() + duplicateField.slice(1)} already exists`;
-        return res.status(400).json({ status: "error", message });
-      }
-  
-      return res.status(500).json({ status: "error", message: "Internal server error" });
-    }
-  });
-  
+      membership, branchDetails, technicalQualification,
+      location: { type: "Point", coordinates: [lng, lat] },
+      password: encryptedPassword,
+      logo: req.file ? req.file.filename : null, // Save uploaded file name
+    });
 
+    return res.status(201).json({ status: "ok", vendorId: newVendor._id });
+  } catch (err) {
+    console.error("Registration Error:", err);
+
+    if (err.code === 11000) {
+      const duplicateField = Object.keys(err.keyValue)[0];
+      const message = `${duplicateField.charAt(0).toUpperCase() + duplicateField.slice(1)} already exists`;
+      return res.status(400).json({ status: "error", message });
+    }
+
+    return res.status(500).json({ status: "error", message: "Internal server error" });
+  }
+});
+app.post("/AboutDetails/:vendorId", async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    const { aboutText } = req.body;
+
+    const updatedVendor = await Vendor.findByIdAndUpdate(
+      vendorId,
+      { aboutUs: aboutText }, // assuming your schema has a field named `about`
+      { new: true }
+    );
+
+    if (!updatedVendor) {
+      return res.status(404).json({ message: "Vendor not found" });
+    }
+
+    res.json({ message: "About details updated successfully", vendor: updatedVendor });
+  } catch (error) {
+    console.error("Error updating about details:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+app.post('/UploadImages/:vendorId', upload.array('propertyImages', 10), async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    const imageFilenames = req.files.map((file) => file.filename);
+
+    const updatedVendor = await Vendor.findByIdAndUpdate(
+      vendorId,
+      { $push: { image: { $each: imageFilenames } } },  // <-- use 'image' here (singular)
+      { new: true }
+    );
+
+    if (!updatedVendor) {
+      return res.status(404).json({ message: 'Vendor not found' });
+    }
+
+    res.json({ message: 'Images uploaded successfully', vendor: updatedVendor });
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 //search
 app.get('/checkUserByEmail', async (req, res) => {
   const { email } = req.query;
@@ -4499,44 +4605,34 @@ app.get('/checkUserByEmail', async (req, res) => {
   }
 });
 
+
+
 app.post("/VSearchBuyer", async (req, res) => {
   const {
     name,
-    email,
-    state,
     pincode,
     number,
     businessType,
+    latitude,
+    longitude,
     skipUserSave,
   } = req.body;
-
-  const apiKey = "AIzaSyCGhSnndOY38FfCgNfSldjpZQX6cT_KpC8"; // Store your Google API key in .env
 
   try {
     let userId = null;
 
-    // Save or update user if not skipped
     if (!skipUserSave) {
-      const existing = await User.findOne({ email });
-
+      const existing = await User.findOne({ name, number });
       if (!existing) {
-        const user = new User({ name, email, state, pincode, number, businessType });
+        const user = new User({ name, pincode, number, businessType });
         await user.save();
         userId = user._id;
       } else {
-        existing.name = name;
-        existing.state = state;
-        existing.pincode = pincode;
-        existing.number = number;
-        existing.businessType = businessType;
-        await existing.save();
         userId = existing._id;
       }
     } else {
-      const existing = await User.findOne({ email });
-      if (existing) {
-        userId = existing._id;
-      }
+      const existing = await User.findOne({ name, number });
+      if (existing) userId = existing._id;
     }
 
     const today = new Date();
@@ -4545,39 +4641,28 @@ app.post("/VSearchBuyer", async (req, res) => {
     let vendors = [];
 
     if (businessType === "Residential") {
-      // Step 1: Search vendors by exact pincode
       vendors = await Vendor.find({
         pincode,
         approved: true,
         expiryDate: { $gt: today },
       });
 
-      // Step 2: If no vendors found, search by geolocation within 3km
-      if (vendors.length === 0) {
-        const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${pincode}&key=${apiKey}`;
-        const response = await axios.get(url);
-        const results = response.data.results;
-
-        if (results.length > 0) {
-          const { lat, lng } = results[0].geometry.location;
-
-          vendors = await Vendor.find({
-            approved: true,
-            expiryDate: { $gt: today },
-            location: {
-              $near: {
-                $geometry: {
-                  type: "Point",
-                  coordinates: [lng, lat],
-                },
-                $maxDistance: 5000, // 3km in meters
+      if (vendors.length === 0 && latitude && longitude) {
+        vendors = await Vendor.find({
+          approved: true,
+          expiryDate: { $gt: today },
+          location: {
+            $near: {
+              $geometry: {
+                type: "Point",
+                coordinates: [longitude, latitude],
               },
+              $maxDistance: 5000,
             },
-          });
-        }
+          },
+        });
       }
     } else {
-      // For other business types, return all approved and active vendors
       vendors = await Vendor.find({
         approved: true,
         expiryDate: { $gt: today },
@@ -4590,7 +4675,7 @@ app.post("/VSearchBuyer", async (req, res) => {
       userId,
     });
   } catch (error) {
-    console.error("Error saving user or fetching vendors:", error);
+    console.error("Error in /VSearchBuyer:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
@@ -4796,7 +4881,6 @@ app.get('/ExpiredVendor', async (req, res) => {
   }
 });
 
-// Add Vendor Route
 app.post('/addVendor', upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'image', maxCount: 5 },
@@ -4819,14 +4903,24 @@ app.post('/addVendor', upload.fields([
     // Handle file uploads
     const logo = req.files['logo'] ? req.files['logo'][0] : null;
     const images = req.files['image'] || [];
+    const imagePaths = images.map(file => file.filename);
 
-    const imagePaths = images.map(file => path.join('uploads', file.filename));
+    // Parse specialistIn if needed
+    let specialistInData = specialistIn;
+    if (typeof specialistIn === 'string') {
+      try {
+        specialistInData = JSON.parse(specialistIn);
+      } catch {
+        specialistInData = specialistIn;
+      }
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Correctly structure location as a GeoJSON point with coordinates [longitude, latitude]
+    // GeoJSON location
     const location = {
       type: 'Point',
-      coordinates: [lng, lat]  // Longitude first, then latitude
+      coordinates: [lng, lat]
     };
 
     const vendor = new Vendor({
@@ -4834,7 +4928,7 @@ app.post('/addVendor', upload.fields([
       address,
       pincode,
       sinceFrom,
-      specialistIn,
+      specialistIn: specialistInData,
       contactPerson,
       contactNumber,
       email,
@@ -4846,9 +4940,9 @@ app.post('/addVendor', upload.fields([
       password: hashedPassword,
       aboutUs,
       website,
-      location,  // Add location here
-      logo: logo ? path.join('uploads', logo.filename) : null,
-      images: imagePaths
+      location,
+      logo: logo ? logo.filename : null,
+      images: imagePaths,
     });
 
     await vendor.save();
@@ -5005,9 +5099,7 @@ app.get('/filter-users', async (req, res) => {
       worksheet.columns = [
         { header: 'Name', key: 'name' },
         { header: 'Number', key: 'number' },
-        { header: 'Email', key: 'email' },
-        { header: 'State', key: 'state' },
-        { header: 'Pincode', key: 'pincode' },
+          { header: 'Pincode', key: 'pincode' },
         { header: 'Business Type', key: 'businessType' },
         { header: 'Created At', key: 'createdAt' }
       ];
@@ -5016,8 +5108,6 @@ app.get('/filter-users', async (req, res) => {
         worksheet.addRow({
           name: user.name,
           number: user.number,
-          email: user.email,
-          state: user.state,
           pincode: user.pincode,
           businessType: user.businessType,
           createdAt: new Date(user.createdAt).toLocaleString()
@@ -5041,7 +5131,25 @@ app.get('/filter-users', async (req, res) => {
     res.status(500).send({ status: 'error', message: 'Internal server error' });
   }
 });
+app.delete("/deleteUser", async (req, res) => {
+  const { VendorId } = req.body;
 
+  try {
+      if (!mongoose.Types.ObjectId.isValid(VendorId)) {
+          return res.status(400).send({ status: "error", message: "Invalid Vendor ID format" });
+      }
+
+      const deletedVendor = await User.findByIdAndDelete( VendorId);
+      if (!deletedVendor) {
+          return res.status(404).send({ status: 'error', message: 'Vendor not found' });
+      }
+
+      res.send({ status: 'ok', message: 'User deleted successfully' });
+  } catch (error) {
+      console.error('Error deleting Vendor:', error);
+      res.status(500).send({ status: 'error', message: 'Internal server error' });
+  }
+});
 
 //enquiry click
 

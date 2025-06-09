@@ -6,7 +6,7 @@ const VendorSchema = new mongoose.Schema({
   address: String,
   pincode: String,
   sinceFrom: String,
-  specialistIn: String,
+  specialistIn: [{ type: String }],
   contactPerson: String,
   contactNumber: { type: String, unique: true },
   email: { type: String, unique: true },
